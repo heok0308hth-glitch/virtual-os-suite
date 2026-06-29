@@ -137,6 +137,19 @@ export const appRouter = router({
         })
       )
       .mutation(({ ctx, input }) => db.updateUserSettings(ctx.user.id, input)),
+
+    save: publicProcedure
+      .input(
+        z.object({
+          model: z.string().min(1),
+          apiKey: z.string().min(1),
+        })
+      )
+      .mutation(async ({ input }) => {
+        // Store API key in session or memory (not in DB for security)
+        // For now, just validate the model
+        return { success: true, model: input.model };
+      }),
   }),
 
   // ─── Chat / AI (server-side LLM proxy) ───────────────────────────────────

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useOS } from "@/contexts/OSContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
+import { toast } from "sonner";
 
 function fmtDate(ts: Date | string) {
   return new Date(ts).toLocaleString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -20,6 +21,8 @@ export function NotesApp({ initialNoteId }: Props) {
   const [editContent, setEditContent] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"date" | "title">("date");
 
   const notesQuery = trpc.notes.list.useQuery(undefined, { enabled: isAuthenticated, retry: false });
   const createMut = trpc.notes.create.useMutation();
@@ -30,6 +33,17 @@ export function NotesApp({ initialNoteId }: Props) {
 
   const notes = notesQuery.data || [];
   const selectedNote = notes.find((n) => n.id === selectedId);
+
+  // Filter and sort notes
+  const filtered = notes
+    .filter((n) => !searchQuery || n.title.toLowerCase().includes(searchQuery.toLowerCase()) || n.content.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => {
+      if (sortBy === "title") {
+        return a.title.localeCompare(b.title);
+      } else {
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
+    });
 
   useEffect(() => {
     if (selectedNote) {
@@ -44,12 +58,17 @@ export function NotesApp({ initialNoteId }: Props) {
   }, [initialNoteId]);
 
   const createNote = async () => {
-    const note = await createMut.mutateAsync({ title: "새 메모", content: "" });
-    utils.notes.list.invalidate();
-    if (note) {
-      setSelectedId(note.id);
-      setEditTitle("새 메모");
-      setEditContent("");
+    try {
+      const note = await createMut.mutateAsync({ title: "새 메모", content: "" });
+      utils.notes.list.invalidate();
+      if (note) {
+        setSelectedId(note.id);
+        setEditTitle("새 메모");
+        setEditContent("");
+      }
+      toast.success("메모가 생성되었습니다.");
+    } catch (e: any) {
+      toast.error(e.message || "메모 생성 실패");
     }
   };
 
@@ -60,154 +79,255 @@ export function NotesApp({ initialNoteId }: Props) {
       await updateMut.mutateAsync({ id: selectedId, title: editTitle, content: editContent });
       utils.notes.list.invalidate();
       setDirty(false);
+      toast.success("메모가 저장되었습니다.");
+    } catch (e: any) {
+      toast.error(e.message || "저장 실패");
     } finally {
       setSaving(false);
     }
   };
 
   const deleteNote = async (id: number) => {
-    await deleteMut.mutateAsync({ id });
-    utils.notes.list.invalidate();
-    if (selectedId === id) {
-      setSelectedId(null);
-      setEditTitle("");
-      setEditContent("");
+    try {
+      await deleteMut.mutateAsync({ id });
+      utils.notes.list.invalidate();
+      if (selectedId === id) {
+        setSelectedId(null);
+        setEditTitle("");
+        setEditContent("");
+      }
+      toast.success("메모가 삭제되었습니다.");
+    } catch (e: any) {
+      toast.error(e.message || "삭제 실패");
     }
   };
 
   const convertToFile = async () => {
     if (!selectedNote) return;
-    const path = `/${selectedNote.title.replace(/[^a-zA-Z0-9가-힣]/g, "_")}.md`;
-    await createFileMut.mutateAsync({ path, content: `# ${selectedNote.title}\n\n${selectedNote.content}` });
-    utils.files.list.invalidate();
-    notify(`파일로 변환됨: ${path}`);
+    try {
+      const filename = selectedNote.title.replace(/[^a-zA-Z0-9가-힣]/g, "_") || "note";
+      const file = await createFileMut.mutateAsync({
+        path: `/${filename}.md`,
+        content: `# ${selectedNote.title}\n\n${selectedNote.content}`,
+      });
+      utils.files.list.invalidate();
+      toast.success(`파일로 변환됨: ${filename}.md`);
+    } catch (e: any) {
+      toast.error(e.message || "변환 실패");
+    }
   };
 
-  const sendToAI = () => {
+  const duplicateNote = async () => {
     if (!selectedNote) return;
-    openWindow("assistant", { data: { prefill: `메모 "${selectedNote.title}" 내용:\n${selectedNote.content}` } });
+    try {
+      const note = await createMut.mutateAsync({
+        title: `${selectedNote.title} (복사본)`,
+        content: selectedNote.content,
+      });
+      utils.notes.list.invalidate();
+      if (note) {
+        setSelectedId(note.id);
+      }
+      toast.success("메모가 복제되었습니다.");
+    } catch (e: any) {
+      toast.error(e.message || "복제 실패");
+    }
+  };
+
+  const exportNote = () => {
+    if (!selectedNote) return;
+    const text = `${selectedNote.title}\n${"=".repeat(selectedNote.title.length)}\n\n${selectedNote.content}\n\n---\n생성일: ${fmtDate(selectedNote.createdAt)}\n수정일: ${fmtDate(selectedNote.updatedAt)}`;
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedNote.title}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("메모가 내보내졌습니다.");
   };
 
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 p-8">
         <span className="text-4xl">📝</span>
-        <div className="text-lg font-bold" style={{ color: "var(--color-foreground)" }}>메모 앱</div>
-        <p className="text-sm text-center" style={{ color: "var(--color-muted-foreground)" }}>로그인 후 메모를 사용할 수 있습니다.</p>
-        <a href={getLoginUrl()} className="px-4 py-2 rounded-xl text-sm font-semibold no-underline" style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}>로그인</a>
+        <div className="text-lg font-bold" style={{ color: "var(--color-foreground)" }}>메모</div>
+        <p className="text-sm text-center" style={{ color: "var(--color-muted-foreground)" }}>
+          메모 기능을 사용하려면 로그인이 필요합니다.
+        </p>
+        <a href={getLoginUrl()} className="px-4 py-2 rounded-xl text-sm font-semibold no-underline" style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}>
+          로그인
+        </a>
       </div>
     );
   }
 
   return (
     <div className="flex h-full">
-      {/* Sidebar */}
-      <div className="w-56 flex-shrink-0 border-r flex flex-col" style={{ borderColor: "oklch(1 0 0 / 0.08)" }}>
+      {/* Note list */}
+      <div className="w-64 flex-shrink-0 border-r flex flex-col" style={{ borderColor: "oklch(1 0 0 / 0.08)" }}>
+        {/* Header */}
         <div className="p-3 border-b" style={{ borderColor: "oklch(1 0 0 / 0.08)" }}>
           <button
-            className="w-full py-2 rounded-xl text-sm font-semibold"
+            className="w-full px-3 py-2 rounded-lg text-sm font-semibold mb-2"
             style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}
             onClick={createNote}
           >
             + 새 메모
           </button>
+
+          {/* Search */}
+          <input
+            type="text"
+            className="w-full px-3 py-2 rounded-lg text-xs outline-none border-0 mb-2"
+            style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
+            placeholder="검색..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+
+          {/* Sort */}
+          <select
+            className="w-full px-2 py-1.5 rounded-lg text-xs outline-none border-0"
+            style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as "date" | "title")}
+          >
+            <option value="date">최근 수정순</option>
+            <option value="title">제목순</option>
+          </select>
         </div>
-        <div className="flex-1 overflow-y-auto os-scroll p-2 flex flex-col gap-1">
-          {notes.length === 0 && (
-            <div className="text-xs text-center py-6" style={{ color: "var(--color-muted-foreground)" }}>메모 없음</div>
+
+        {/* Info box */}
+        <div className="p-3 border-b text-xs" style={{ borderColor: "oklch(1 0 0 / 0.08)", color: "var(--color-muted-foreground)" }}>
+          <p className="font-semibold mb-1">💡 메모 vs 파일</p>
+          <p className="leading-relaxed">
+            <strong>메모:</strong> 빠른 노트, 생각 정리<br/>
+            <strong>파일:</strong> 코드, 문서, 데이터 관리
+          </p>
+        </div>
+
+        {/* Note list */}
+        <div className="flex-1 overflow-y-auto os-scroll">
+          {filtered.length === 0 ? (
+            <div className="p-3 text-xs text-center" style={{ color: "var(--color-muted-foreground)" }}>
+              메모가 없습니다.
+            </div>
+          ) : (
+            filtered.map((n) => (
+              <button
+                key={n.id}
+                className="w-full text-left px-3 py-2.5 text-xs transition-colors border-b"
+                style={{
+                  background: selectedId === n.id ? "oklch(0.6 0.18 280 / 0.15)" : "transparent",
+                  color: "var(--color-foreground)",
+                  borderColor: "oklch(1 0 0 / 0.08)",
+                }}
+                onClick={() => setSelectedId(n.id)}
+              >
+                <div className="font-semibold truncate mb-1">{n.title}</div>
+                <div className="text-xs line-clamp-2" style={{ color: "var(--color-muted-foreground)" }}>
+                  {n.content || "(내용 없음)"}
+                </div>
+                <div className="text-xs mt-1" style={{ color: "var(--color-muted-foreground)" }}>
+                  {fmtDate(n.updatedAt)}
+                </div>
+              </button>
+            ))
           )}
-          {notes.map((n) => (
-            <button
-              key={n.id}
-              className="w-full text-left p-2.5 rounded-xl transition-colors"
-              style={{
-                background: n.id === selectedId ? "oklch(0.6 0.18 280 / 0.18)" : "oklch(1 0 0 / 0.04)",
-                color: "var(--color-foreground)",
-                border: n.id === selectedId ? "1px solid oklch(0.6 0.18 280 / 0.3)" : "1px solid transparent",
-              }}
-              onClick={() => setSelectedId(n.id)}
-            >
-              <div className="text-sm font-semibold truncate">{n.title}</div>
-              <div className="text-xs truncate mt-0.5" style={{ color: "var(--color-muted-foreground)" }}>
-                {n.content.slice(0, 40) || "(빈 메모)"}
-              </div>
-              <div className="text-xs mt-0.5" style={{ color: "var(--color-muted-foreground)" }}>{fmtDate(n.updatedAt)}</div>
-            </button>
-          ))}
         </div>
       </div>
 
       {/* Editor */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col">
         {selectedNote ? (
           <>
-            <div className="flex items-center justify-between p-3 border-b" style={{ borderColor: "oklch(1 0 0 / 0.08)" }}>
+            {/* Title bar */}
+            <div className="px-4 py-3 border-b" style={{ borderColor: "oklch(1 0 0 / 0.08)" }}>
               <input
-                className="flex-1 text-base font-bold bg-transparent outline-none border-0 mr-3"
+                type="text"
+                className="w-full px-0 py-1 text-lg font-bold outline-none border-0 bg-transparent"
                 style={{ color: "var(--color-foreground)" }}
                 value={editTitle}
-                onChange={(e) => { setEditTitle(e.target.value); setDirty(true); }}
-                placeholder="제목"
+                onChange={(e) => {
+                  setEditTitle(e.target.value);
+                  setDirty(true);
+                }}
+                placeholder="제목 없음"
               />
-              <div className="flex items-center gap-2">
-                {dirty && (
-                  <button
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold"
-                    style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}
-                    onClick={saveNote}
-                    disabled={saving}
-                  >
-                    {saving ? "저장 중..." : "저장"}
-                  </button>
-                )}
+              <p className="text-xs mt-1" style={{ color: "var(--color-muted-foreground)" }}>
+                생성: {fmtDate(selectedNote.createdAt)} • 수정: {fmtDate(selectedNote.updatedAt)}
+              </p>
+            </div>
+
+            {/* Content editor */}
+            <textarea
+              className="flex-1 p-4 outline-none border-0 resize-none"
+              style={{
+                background: "oklch(1 0 0 / 0.02)",
+                color: "var(--color-foreground)",
+              }}
+              value={editContent}
+              onChange={(e) => {
+                setEditContent(e.target.value);
+                setDirty(true);
+              }}
+              placeholder="메모 내용을 입력하세요..."
+            />
+
+            {/* Action bar */}
+            <div className="px-4 py-3 border-t flex items-center justify-between" style={{ borderColor: "oklch(1 0 0 / 0.08)" }}>
+              <div className="flex gap-2">
                 <button
-                  className="px-3 py-1.5 rounded-xl text-xs transition-colors"
+                  className="px-2 py-1.5 rounded-lg text-xs font-semibold"
                   style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
-                  onClick={sendToAI}
-                  title="AI 비서에게 전송"
+                  onClick={exportNote}
+                  title="내보내기"
                 >
-                  ✦ AI
+                  ⬇
                 </button>
                 <button
-                  className="px-3 py-1.5 rounded-xl text-xs transition-colors"
+                  className="px-2 py-1.5 rounded-lg text-xs font-semibold"
+                  style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
+                  onClick={duplicateNote}
+                  title="복제"
+                >
+                  📋
+                </button>
+                <button
+                  className="px-2 py-1.5 rounded-lg text-xs font-semibold"
                   style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
                   onClick={convertToFile}
                   title="파일로 변환"
                 >
-                  📄 파일
+                  📄
                 </button>
                 <button
-                  className="px-3 py-1.5 rounded-xl text-xs transition-colors hover:bg-red-500/20"
-                  style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
+                  className="px-2 py-1.5 rounded-lg text-xs font-semibold"
+                  style={{ background: "oklch(0.5 0.18 0 / 0.15)", color: "oklch(0.7 0.2 0)" }}
                   onClick={() => deleteNote(selectedNote.id)}
+                  title="삭제"
                 >
-                  삭제
+                  🗑
                 </button>
               </div>
-            </div>
-            <textarea
-              className="flex-1 p-4 text-sm bg-transparent outline-none border-0 resize-none leading-relaxed"
-              style={{ color: "var(--color-foreground)" }}
-              value={editContent}
-              onChange={(e) => { setEditContent(e.target.value); setDirty(true); }}
-              placeholder="내용을 입력하세요..."
-              onBlur={saveNote}
-            />
-            <div className="px-4 py-2 text-xs border-t" style={{ borderColor: "oklch(1 0 0 / 0.08)", color: "var(--color-muted-foreground)" }}>
-              {editContent.length}자 · 수정: {fmtDate(selectedNote.updatedAt)}
+
+              {dirty && (
+                <button
+                  className="px-4 py-2 rounded-lg text-sm font-semibold"
+                  style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}
+                  onClick={saveNote}
+                  disabled={saving}
+                >
+                  {saving ? "저장 중..." : "저장"}
+                </button>
+              )}
             </div>
           </>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <span className="text-4xl">📝</span>
-            <p className="text-sm" style={{ color: "var(--color-muted-foreground)" }}>메모를 선택하거나 새로 만드세요</p>
-            <button
-              className="px-4 py-2 rounded-xl text-sm font-semibold"
-              style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}
-              onClick={createNote}
-            >
-              + 새 메모
-            </button>
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            <span className="text-5xl">📝</span>
+            <p style={{ color: "var(--color-muted-foreground)" }}>메모를 선택해주세요.</p>
           </div>
         )}
       </div>

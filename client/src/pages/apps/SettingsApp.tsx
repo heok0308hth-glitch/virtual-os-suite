@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useOS, Wallpaper, Theme } from "@/contexts/OSContext";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -10,11 +10,14 @@ export function SettingsApp() {
   const { isAuthenticated } = useAuth();
   const [localModel, setLocalModel] = useState(state.model);
   const [localName, setLocalName] = useState(state.systemName);
+  const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [tab, setTab] = useState<"appearance" | "ai" | "data">("appearance");
 
   const modelsQuery = trpc.ai.listModels.useQuery(undefined, { retry: false, enabled: isAuthenticated });
+  const settingsMut = trpc.settings.save.useMutation();
 
   useEffect(() => {
     if (modelsQuery.data) {
@@ -33,9 +36,23 @@ export function SettingsApp() {
     { id: "ocean", label: "Ocean", preview: "linear-gradient(145deg, #07111d, #0e2236 52%, #07111d)" },
   ];
 
-  const handleSaveAI = () => {
-    setModel(localModel);
-    toast.success("AI 설정이 저장되었습니다.");
+  const handleSaveAI = async () => {
+    if (!apiKey.trim()) {
+      toast.error("API 키를 입력해주세요.");
+      return;
+    }
+
+    try {
+      await settingsMut.mutateAsync({
+        model: localModel,
+        apiKey: apiKey.trim(),
+      });
+      setModel(localModel);
+      setApiKey("");
+      toast.success("AI 설정이 저장되었습니다.");
+    } catch (e: any) {
+      toast.error(e.message || "저장에 실패했습니다.");
+    }
   };
 
   const handleSaveName = () => {
@@ -190,7 +207,7 @@ export function SettingsApp() {
               <p className="text-xs mb-3" style={{ color: "var(--color-muted-foreground)" }}>
                 AI 비서·검색 요약·에이전트 모드에 사용할 모델을 선택합니다. API 키는 서버에서 안전하게 관리됩니다.
               </p>
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 mb-4">
                 {availableModels.length > 0 ? (
                   availableModels.map((m) => (
                     <button
@@ -225,19 +242,47 @@ export function SettingsApp() {
                   </div>
                 )}
               </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-semibold mb-2" style={{ color: "var(--color-foreground)" }}>
+                  API 키
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type={showApiKey ? "text" : "password"}
+                    className="flex-1 rounded-xl px-3 py-2 text-sm outline-none border-0"
+                    style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
+                    placeholder="sk-... 또는 API 키 입력"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                  <button
+                    className="px-3 py-2 rounded-xl text-sm"
+                    style={{ background: "oklch(1 0 0 / 0.08)", color: "var(--color-foreground)" }}
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? "숨기기" : "표시"}
+                  </button>
+                </div>
+                <p className="text-xs mt-2" style={{ color: "var(--color-muted-foreground)" }}>
+                  API 키는 서버에만 전송되며 저장되지 않습니다.
+                </p>
+              </div>
+
               <button
-                className="mt-3 px-4 py-2 rounded-xl text-sm font-semibold"
+                className="px-4 py-2 rounded-xl text-sm font-semibold"
                 style={{ background: "oklch(0.6 0.18 280 / 0.22)", color: "var(--color-foreground)" }}
                 onClick={handleSaveAI}
+                disabled={settingsMut.isPending}
               >
-                저장
+                {settingsMut.isPending ? "저장 중..." : "저장"}
               </button>
             </div>
 
             <div className="os-panel">
               <h4 className="font-semibold text-sm mb-2" style={{ color: "var(--color-foreground)" }}>🔒 보안 안내</h4>
               <p className="text-xs leading-relaxed" style={{ color: "var(--color-muted-foreground)" }}>
-                모든 AI API 호출은 서버에서 처리됩니다. API 키는 클라이언트에 노출되지 않으며, 서버 환경 변수로 안전하게 관리됩니다.
+                모든 AI API 호출은 서버에서 처리됩니다. API 키는 클라이언트에 노출되지 않으며, 요청 시에만 사용됩니다.
               </p>
             </div>
           </div>

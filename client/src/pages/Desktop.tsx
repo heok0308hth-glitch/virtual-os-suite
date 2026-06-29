@@ -7,7 +7,7 @@ import { HomeApp } from "./apps/HomeApp";
 import { AssistantApp } from "./apps/AssistantApp";
 import { NotesApp } from "./apps/NotesApp";
 import { FilesApp } from "./apps/FilesApp";
-import { BrowserApp } from "./apps/BrowserApp";
+import { GoogleApp } from "./apps/GoogleApp";
 import { SettingsApp } from "./apps/SettingsApp";
 import { MarketApp } from "./apps/MarketApp";
 import { WalletApp } from "./apps/WalletApp";
@@ -18,7 +18,7 @@ function AppContent({ appId, data }: { appId: AppId; data?: Record<string, any> 
     case "assistant": return <AssistantApp />;
     case "notes": return <NotesApp initialNoteId={data?.selectedNoteId} />;
     case "files": return <FilesApp initialFileId={data?.selectedFileId} />;
-    case "browser": return <BrowserApp initialQuery={data?.searchQuery} />;
+    case "browser": return <GoogleApp />;
     case "settings": return <SettingsApp />;
     case "market": return <MarketApp />;
     case "wallet": return <WalletApp />;
@@ -75,7 +75,7 @@ function DesktopIcons() {
     { appId: "assistant", glyph: "✦", label: "AI 비서" },
     { appId: "notes", glyph: "📝", label: "메모" },
     { appId: "files", glyph: "📁", label: "파일" },
-    { appId: "browser", glyph: "◎", label: "The 구글 v2.5" },
+    { appId: "browser", glyph: "🔍", label: "구글" },
     { appId: "market", glyph: "◫", label: "마켓" },
     { appId: "wallet", glyph: "💎", label: "지갑" },
     { appId: "settings", glyph: "⚙", label: "설정" },
